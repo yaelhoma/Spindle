@@ -47,6 +47,6 @@ void handle_security_error(const char *msg)
    snprintf(newstr, msg_size, "%s%s", prefix, msg);
 
    openlog("spindle", LOG_CONS, LOG_USER);
-   syslog(LOG_AUTHPRIV | LOG_ERR, "%s", newstr);
+   //syslog(LOG_AUTHPRIV | LOG_ERR, "%s", newstr);
    closelog();
 }
