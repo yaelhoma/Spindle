@@ -749,11 +749,6 @@ static int reliable_write(int fd, const void *buf, size_t size)
 {
    int result;
    size_t bytes_written = 0;
-   unsigned char *byte_data = (unsigned char *)buf;
-      for (size_t i = 0; i < size; ++i) {
-         fprintf(stderr,"%02x ", byte_data[i]);
-      }
-      fprintf(stderr,"\n");
 
    while (bytes_written < size) {
       result = write(fd, ((unsigned char *) buf) + bytes_written, size - bytes_written);
