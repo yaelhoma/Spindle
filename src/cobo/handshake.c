@@ -30,6 +30,7 @@ Place, Suite 330, Boston, MA 02111-1307 USA
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/ip.h>
+#include <math.h>
 
 #include "handshake.h"
 #include "config.h"
@@ -81,6 +82,9 @@ Place, Suite 330, Boston, MA 02111-1307 USA
 #define SERVER_TO_CLIENT_SIG 0x67AD047E
 #define CLIENT_TO_SERVER_SIG 0x9B1CC028
 
+#define P 23
+#define G 9
+
 #define HSHAKE_AGAIN -16
 
 typedef struct {
@@ -100,7 +104,6 @@ typedef struct {
    struct sockaddr server_addr;
    struct sockaddr client_addr;
 } connection_info_t;
-
 
 static FILE *debug_file = NULL;
 static char *last_error_message = NULL;
@@ -751,11 +754,6 @@ static int reliable_write(int fd, const void *buf, size_t size)
 {
    int result;
    size_t bytes_written = 0;
-   unsigned char *byte_data = (unsigned char *)buf;
-      for (size_t i = 0; i < size; ++i) {
-         fprintf(stderr,"%02x ", byte_data[i]);
-      }
-      fprintf(stderr,"\n");
    while (bytes_written < size) {
       result = write(fd, ((unsigned char *) buf) + bytes_written, size - bytes_written);
       if (result == -1 && errno == EINTR)
@@ -1053,12 +1051,9 @@ static int compare_packets(handshake_packet_t *expected_packet,
       security_error_printf("Received handshake from another gid.  Expected %d, got %d\n",
                             (int) expected_packet->gid, (int) recvd_packet->gid);
       return HSHAKE_ABORT;
-   }
-   fprintf(stderr,"Received handshake with different random number.  Expected %d, got %d\n",
-                            (int) expected_packet->random_number, (int) recvd_packet->random_number);
-      
+   }  
    if (expected_packet->random_number != recvd_packet->random_number) {
-      fprintf(stderr,"Received handshake with different random number.  Expected %d, got %d\n",
+      security_error_printf("Received handshake with different random number.  Expected %d, got %d\n",
                             (int) expected_packet->random_number, (int) recvd_packet->random_number);
       return HSHAKE_ABORT;
    }
