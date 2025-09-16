@@ -164,6 +164,7 @@ static int send_packet(int sockfd, unsigned char *packet, unsigned int packet_si
 static int recv_packet(int sockfd, unsigned char **packet, size_t *packet_size);
 static int exchange_sig(int sockfd);
 static int exchange_random_number(int sockfd, int is_server);
+
 static int log_security_error(const char *format, ...);
 static int log_error(const char *format, ...);
 
@@ -297,7 +298,7 @@ static int handshake_main(int sockfd, handshake_protocol_t *hdata, uint64_t sess
    /**
     * Encode socket names, session, gid, and uid into a handshake_packet_t
     **/
-   
+
    debug_printf("Creating outgoing packet for handshake\n");
    result = encode_packet(&packet, session_id, &saved_conninfo->server_addr, &saved_conninfo->client_addr);
    if (result < 0) {
@@ -307,7 +308,7 @@ static int handshake_main(int sockfd, handshake_protocol_t *hdata, uint64_t sess
    }
    packet.signature = is_server ? SERVER_TO_CLIENT_SIG : CLIENT_TO_SERVER_SIG;
    debug_printf("Encoded packet: server_port = %d, client_port = %d, "
-                "uid = %d, gid = %d, session_id = %llu, signature = %lx\n", 
+                "uid = %d, gid = %d, session_id = %llu, signature = %lx\n",
                 (int) packet.server_port, (int) packet.client_port, (int) packet.uid, (int) packet.gid, 
                 (unsigned long long) packet.session_id, (unsigned long) packet.signature);
 
@@ -795,7 +796,6 @@ static int reliable_write(int fd, const void *buf, size_t size)
 {
    int result;
    size_t bytes_written = 0;
-   
    while (bytes_written < size) {
       result = write(fd, ((unsigned char *) buf) + bytes_written, size - bytes_written);
       if (result == -1 && errno == EINTR)
@@ -1137,7 +1137,6 @@ static int compare_packets(handshake_packet_t *expected_packet,
                            handshake_packet_t *recvd_packet)
 {
    int i;
-   
    if (expected_packet->session_id != recvd_packet->session_id) {
       //If sessions don't match, expect that we've just recv a packet
       //from another instance of handshake running on the same node.
