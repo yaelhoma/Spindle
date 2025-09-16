@@ -803,6 +803,10 @@ static int reliable_write(int fd, const void *buf, size_t size)
 {
    int result;
    size_t bytes_written = 0;
+<<<<<<< HEAD
+=======
+
+>>>>>>> e886729 (removed debugging prints)
    while (bytes_written < size) {
       result = write(fd, ((unsigned char *) buf) + bytes_written, size - bytes_written);
       if (result == -1 && errno == EINTR)
