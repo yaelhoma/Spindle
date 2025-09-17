@@ -30,7 +30,6 @@ Place, Suite 330, Boston, MA 02111-1307 USA
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/ip.h>
-#include <math.h>
 
 #include "handshake.h"
 #include "config.h"
@@ -81,9 +80,6 @@ Place, Suite 330, Boston, MA 02111-1307 USA
 #define SIG 0x845D96C1
 #define SERVER_TO_CLIENT_SIG 0x67AD047E
 #define CLIENT_TO_SERVER_SIG 0x9B1CC028
-
-#define P 23
-#define G 9
 
 #define HSHAKE_AGAIN -16
 
@@ -803,10 +799,6 @@ static int reliable_write(int fd, const void *buf, size_t size)
 {
    int result;
    size_t bytes_written = 0;
-<<<<<<< HEAD
-=======
-
->>>>>>> e886729 (removed debugging prints)
    while (bytes_written < size) {
       result = write(fd, ((unsigned char *) buf) + bytes_written, size - bytes_written);
       if (result == -1 && errno == EINTR)
