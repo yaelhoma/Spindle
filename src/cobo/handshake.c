@@ -95,11 +95,15 @@ typedef struct {
 } handshake_packet_t;
 
 typedef struct {
+   uint32_t random_number;
+   uint32_t signature;
+} random_number_packet_t;
+
+typedef struct {
    int i_am_server;
    struct sockaddr server_addr;
    struct sockaddr client_addr;
 } connection_info_t;
-
 
 static FILE *debug_file = NULL;
 static char *last_error_message = NULL;
@@ -122,6 +126,8 @@ static int none_encrypt_packet(handshake_packet_t *packet,
                                unsigned char **packet_buffer, size_t *packet_buffer_size);
 static int munge_encrypt_packet(handshake_packet_t *packet, 
                                 unsigned char **packet_buffer, size_t *packet_buffer_size);
+static int munge_encrypt_random_number(random_number_packet_t *packet, 
+                                unsigned char **packet_buffer, size_t *packet_buffer_size);
 static int filekey_encrypt_packet(char *key_filepath, int key_length_bytes,
                                   handshake_packet_t *packet, 
                                   unsigned char **packet_buffer, size_t *packet_buffer_size);
@@ -135,6 +141,8 @@ static int decrypt_packet(handshake_protocol_t *hdata, handshake_packet_t *expec
 static int none_decrypt_packet(handshake_packet_t *expected_packet,
                                unsigned char *recvd_buffer, size_t recvd_buffer_size);
 static int munge_decrypt_packet(handshake_packet_t *expected_packet,
+                                unsigned char *recvd_buffer, size_t recvd_buffer_size);
+static int munge_decrypt_random_number_packet(random_number_packet_t *recvd_packet,
                                 unsigned char *recvd_buffer, size_t recvd_buffer_size);
 static int key_decrypt_packet(unsigned char *key, unsigned int key_len,
                               handshake_packet_t *expected_packet,
@@ -155,6 +163,7 @@ static int get_client_server_addrs(int sockfd, int i_am_server, connection_info_
 static int send_packet(int sockfd, unsigned char *packet, unsigned int packet_size);
 static int recv_packet(int sockfd, unsigned char **packet, size_t *packet_size);
 static int exchange_sig(int sockfd);
+static int exchange_random_number(int sockfd, int is_server);
 static int log_security_error(const char *format, ...);
 static int log_error(const char *format, ...);
 
@@ -288,6 +297,7 @@ static int handshake_main(int sockfd, handshake_protocol_t *hdata, uint64_t sess
    /**
     * Encode socket names, session, gid, and uid into a handshake_packet_t
     **/
+   
    debug_printf("Creating outgoing packet for handshake\n");
    result = encode_packet(&packet, session_id, &saved_conninfo->server_addr, &saved_conninfo->client_addr);
    if (result < 0) {
@@ -297,7 +307,7 @@ static int handshake_main(int sockfd, handshake_protocol_t *hdata, uint64_t sess
    }
    packet.signature = is_server ? SERVER_TO_CLIENT_SIG : CLIENT_TO_SERVER_SIG;
    debug_printf("Encoded packet: server_port = %d, client_port = %d, "
-                "uid = %d, gid = %d, session_id = %llu, signature = %lx\n",
+                "uid = %d, gid = %d, session_id = %llu, signature = %lx\n", 
                 (int) packet.server_port, (int) packet.client_port, (int) packet.uid, (int) packet.gid, 
                 (unsigned long long) packet.session_id, (unsigned long) packet.signature);
 
@@ -358,9 +368,15 @@ static int handshake_main(int sockfd, handshake_protocol_t *hdata, uint64_t sess
       return_result = result;
       goto done;
    }
-
-   debug_printf("Successfully completed initial handshake\n");
-
+   
+   debug_printf("Successfully completed initial handshake\n"); 
+   result = exchange_random_number(sockfd, is_server);
+   if (result < 0) {
+      debug_printf("Error exchanging signatures\n");
+      socket_error = 1;
+      return_result = result;
+      goto done;
+   }
    return_result = 0;
 
   done:
@@ -503,6 +519,44 @@ static int munge_create_context(munge_ctx_t *output_ctx)
    return 0;
 }
 #endif
+static int munge_encrypt_random_number(random_number_packet_t *packet, 
+                                unsigned char **packet_buffer, size_t *packet_buffer_size)
+{
+#if defined(MUNGE)
+   munge_err_t result;
+   munge_ctx_t ctx = NULL;
+   int return_result;
+
+   result = munge_create_context(&ctx);
+   if (result < 0) {
+      debug_printf("Failed to create munge context while encrypting packet\n");
+      return_result = result;
+      goto done;
+   }
+   
+   result = munge_encode((char **) packet_buffer, ctx, packet, sizeof(random_number_packet_t));
+   if (result != EMUNGE_SUCCESS) {
+      error_printf("Munge failed to encrypt packet with error: %s\n", munge_ctx_strerror(ctx));
+      return_result = HSHAKE_INTERNAL_ERROR;
+      goto done;
+   }
+   assert(*packet_buffer != NULL);
+   *packet_buffer_size = strlen((char *) *packet_buffer) + 1;
+   
+   debug_printf("Munge encoded packet successfully\n");
+
+   return_result = 0;
+
+  done:
+   if (ctx != NULL) {
+      munge_ctx_destroy(ctx);
+   }
+   return return_result;
+#else
+   error_printf("Handshake not compiled with munge support\n");
+   return HSHAKE_INTERNAL_ERROR;
+#endif
+}
 
 static int munge_encrypt_packet(handshake_packet_t *packet, 
                                 unsigned char **packet_buffer, size_t *packet_buffer_size)
@@ -741,7 +795,7 @@ static int reliable_write(int fd, const void *buf, size_t size)
 {
    int result;
    size_t bytes_written = 0;
-
+   
    while (bytes_written < size) {
       result = write(fd, ((unsigned char *) buf) + bytes_written, size - bytes_written);
       if (result == -1 && errno == EINTR)
@@ -845,6 +899,87 @@ static int none_decrypt_packet(handshake_packet_t *expected_packet,
 #endif
 }
 
+static int munge_decrypt_random_number_packet(random_number_packet_t *recvd_packet,
+                                unsigned char *recvd_buffer, size_t recvd_buffer_size)
+{
+#if defined(MUNGE)
+   munge_err_t result;
+   munge_ctx_t ctx = NULL;
+   void *payload = NULL;
+   int payload_size, return_result, iresult;
+   uid_t uid;
+   gid_t gid;
+
+   iresult = munge_create_context(&ctx);
+   if (iresult < 0) {
+      debug_printf("Failed to create munge context while decrypting packet\n");
+      return_result = iresult;
+      goto done;
+   }
+   
+   result = munge_decode((char *) recvd_buffer, ctx, &payload, &payload_size, &uid, &gid);
+switch (result) {
+      case EMUNGE_SUCCESS:
+         break;
+      case EMUNGE_SNAFU:
+      case EMUNGE_BAD_ARG:
+      case EMUNGE_BAD_LENGTH:
+      case EMUNGE_OVERFLOW:
+      case EMUNGE_NO_MEMORY:
+      case EMUNGE_SOCKET:
+      case EMUNGE_TIMEOUT:
+         error_printf("Munge failed to decrypt packet with error: %s\n", munge_strerror(result));
+         return_result = HSHAKE_INTERNAL_ERROR;
+         goto done;
+      case EMUNGE_CRED_EXPIRED:
+         debug_printf("Produced a timed out certificate.\n");
+         return_result = HSHAKE_AGAIN;
+         goto done;
+      case EMUNGE_BAD_CRED:
+         debug_printf("Received garbage credential\n");
+         return_result = HSHAKE_DROP_CONNECTION;
+         goto done;
+      case EMUNGE_BAD_VERSION:
+      case EMUNGE_BAD_CIPHER:
+      case EMUNGE_BAD_MAC:
+      case EMUNGE_BAD_ZIP:
+      case EMUNGE_BAD_REALM:
+      case EMUNGE_CRED_INVALID:
+      case EMUNGE_CRED_REWOUND:
+      case EMUNGE_CRED_REPLAYED:
+      case EMUNGE_CRED_UNAUTHORIZED:
+         security_error_printf("Bad credential provided: %s\n", munge_strerror(result));
+         return_result = HSHAKE_ABORT;
+         goto done;
+      default:
+         security_error_printf("Unknown error return from munge: %s\n", munge_strerror(result));
+         return_result = HSHAKE_ABORT;
+         goto done;
+   } 
+   
+   if (payload_size != sizeof(*recvd_packet)) {
+      security_error_printf("Recieved munge packet with invalid payload size of %d\n", (int) payload_size);
+      return_result = HSHAKE_ABORT;
+      goto done;
+   }
+   memcpy(recvd_packet, (random_number_packet_t *) payload, sizeof(random_number_packet_t));
+   
+   return 0;
+
+  done:
+   if (payload)
+      free(payload);
+   if (ctx)
+      munge_ctx_destroy(ctx);
+
+   return return_result;
+   
+#else
+   error_printf("Handshake not compiled with munge support\n");
+   return HSHAKE_INTERNAL_ERROR;
+#endif
+}
+
 static int munge_decrypt_packet(handshake_packet_t *expected_packet,
                                 unsigned char *recvd_buffer, size_t recvd_buffer_size)
 {
@@ -910,7 +1045,7 @@ static int munge_decrypt_packet(handshake_packet_t *expected_packet,
       goto done;
    }
    recvd_packet = (handshake_packet_t *) payload;
-
+  
    /* Munge provides a UID and GID.  That should match the copy in the payload */
    if (recvd_packet->uid != uid) {
       security_error_printf("Packet came from uid %d, but payload claimed uid %d\n", 
@@ -1002,7 +1137,7 @@ static int compare_packets(handshake_packet_t *expected_packet,
                            handshake_packet_t *recvd_packet)
 {
    int i;
-
+   
    if (expected_packet->session_id != recvd_packet->session_id) {
       //If sessions don't match, expect that we've just recv a packet
       //from another instance of handshake running on the same node.
@@ -1011,19 +1146,19 @@ static int compare_packets(handshake_packet_t *expected_packet,
                    expected_packet->session_id, recvd_packet->session_id);
       return HSHAKE_DROP_CONNECTION;
    }
-
+   
    if (expected_packet->signature != recvd_packet->signature) {
       security_error_printf("Received handshake with malformed signature.  Expected %x, got %x\n",
                             expected_packet->signature, recvd_packet->signature);
       return HSHAKE_ABORT;
    }
-
+   
    if (expected_packet->server_port != recvd_packet->server_port) {
       security_error_printf("Received handshake with bad server port.  Expected %d, got %d\n",
                             (int) expected_packet->server_port, (int) recvd_packet->server_port);
       return HSHAKE_ABORT;
    }
-
+   
    if (expected_packet->client_port != recvd_packet->client_port) {
       security_error_printf("Received handshake with bad client port.  Expected %d, got %d\n",
                             (int) expected_packet->client_port, (int) recvd_packet->client_port);
@@ -1040,7 +1175,7 @@ static int compare_packets(handshake_packet_t *expected_packet,
       security_error_printf("Received handshake from another gid.  Expected %d, got %d\n",
                             (int) expected_packet->gid, (int) recvd_packet->gid);
       return HSHAKE_ABORT;
-   }
+   } 
 
    for (i = 0; i < MAX_ADDR_LEN; i++) {
       if (expected_packet->server_addr[i] != recvd_packet->server_addr[i]) {
@@ -1160,6 +1295,135 @@ static int exchange_sig(int sockfd)
    }
 
    return 0;
+}
+
+
+int exchange_random_number(int sockfd, int is_server) 
+{
+#if defined(MUNGE)   
+   int result, return_result, peer_result, socket_error = 0;
+   random_number_packet_t my_packet, their_packet, expected_packet, their_expected_packet, recvd_packet;
+   uint32_t rand_n = (uint32_t) rand();
+   my_packet.random_number = rand_n;
+   expected_packet.random_number = rand_n;
+   my_packet.signature = is_server ? SERVER_TO_CLIENT_SIG : CLIENT_TO_SERVER_SIG;
+   expected_packet.signature = is_server ? CLIENT_TO_SERVER_SIG : SERVER_TO_CLIENT_SIG;
+   unsigned char *packet_buffer = NULL, *recvd_packet_buffer = NULL;
+   size_t packet_buffer_size = 0, recvd_packet_buffer_size = 0;
+   
+   //encrypt my packet
+   result = munge_encrypt_random_number(&my_packet, &packet_buffer, &packet_buffer_size);
+   if (result < 0) {
+      debug_printf("Error in server encrypting outgoing random_number_packet");
+      return_result = result;
+      goto done;
+   }
+
+   //send my packet
+   result = send_packet(sockfd, packet_buffer, packet_buffer_size);
+   debug_printf("Sending my random number packet on network\n");
+   if (result < 0) {
+      debug_printf("Problem sending packet on network: %s\n", strerror(errno));
+      return_result = result;
+      socket_error = 1;
+      return HSHAKE_DROP_CONNECTION;
+   }
+   //get their packet
+   debug_printf("Receiving their random number packet from network\n");
+   result = recv_packet(sockfd, &recvd_packet_buffer, &recvd_packet_buffer_size);
+   if (result < 0) {
+      debug_printf("Problem receiving packet\n");
+      return_result = result;
+      socket_error = 1;
+      goto done;
+   }
+   //decrypt their packet
+   debug_printf("Decrypting their random number packet\n");
+   result = munge_decrypt_random_number_packet(&their_packet, recvd_packet_buffer, recvd_packet_buffer_size);
+   if (result < 0) {
+      debug_printf("Error decrypting and checking received packet\n");
+      return_result = result;
+      goto done;
+   }
+
+   //encrypt packet that they are expecting
+   their_expected_packet.random_number = their_packet.random_number;
+   their_expected_packet.signature = my_packet.signature;
+   result = munge_encrypt_random_number(&their_expected_packet, &packet_buffer, &packet_buffer_size);
+   if (result < 0) {
+      debug_printf("Error in server encrypting outgoing random_number_packet");
+      return_result = result;
+      goto done;
+   }
+   //send their expected packet
+   debug_printf("Sending their expected random number packet on network\n");
+   result = send_packet(sockfd, packet_buffer, packet_buffer_size);
+   if (result < 0) {
+      debug_printf("Problem sending packet on network: %s\n", strerror(errno));
+      return_result = result;
+      socket_error = 1;
+      return HSHAKE_DROP_CONNECTION;
+   }
+   //get packet from them
+   debug_printf("Receiving their random number packet from network\n");
+   result = recv_packet(sockfd, &recvd_packet_buffer, &recvd_packet_buffer_size);
+   if (result < 0) {
+      debug_printf("Problem receiving packet\n");
+      return_result = result;
+      socket_error = 1;
+      goto done;
+   }
+   //decrypt packet from them
+   debug_printf("Decrypting their random number packet\n");
+   result = munge_decrypt_random_number_packet(&recvd_packet, recvd_packet_buffer, recvd_packet_buffer_size);
+   if (result < 0) {
+      debug_printf("Error decrypting and checking received packet\n");
+      return_result = result;
+      goto done;
+   }
+   //compare results
+   if (expected_packet.random_number != recvd_packet.random_number) {
+      security_error_printf("Received handshake with wrong random number.  Expected %d, got %d\n",
+                            expected_packet.random_number, recvd_packet.random_number);
+      return HSHAKE_ABORT;
+   }
+
+   if (expected_packet.signature != recvd_packet.signature) {
+      security_error_printf("Received handshake with malformed signature.  Expected %x, got %x\n",
+                            expected_packet.signature, recvd_packet.signature);
+      return HSHAKE_ABORT;
+   }
+   return_result = 0;
+
+  done:
+
+   /** 
+    * Send to peer the result of our connection attempt.  Only share whether
+    * we're accepting, dropping, or asking for a re-try.  
+    **/
+   if (!socket_error) {
+      peer_result = share_result(sockfd, return_result);
+      if (return_result == 0 && peer_result != 0) {
+         /**
+          * Only return the peer's result if we think everything
+          * authenticated successfully on our end.  Otherwise we'll
+          * return our result.
+          **/
+         debug_printf("Setting handshake result to peer's result of %d\n", peer_result);
+         return_result = peer_result;
+      }
+   }
+
+   if (packet_buffer)
+      free(packet_buffer);
+   if (recvd_packet_buffer)
+      free(recvd_packet_buffer);
+
+   return return_result;
+#else
+   debug_printf("Random Number Exchange Only Supported with Munge\n");
+   return 0;
+#endif
 }
 
 static int send_packet(int sockfd, unsigned char *packet, unsigned int packet_size)
