@@ -27,6 +27,7 @@ Place, Suite 330, Boston, MA 02111-1307 USA
 #include <sys/select.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <time.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/ip.h>
@@ -84,7 +85,7 @@ Place, Suite 330, Boston, MA 02111-1307 USA
 #define HSHAKE_AGAIN -16
 
 typedef struct {
-   uint32_t random_number;
+   uint64_t random_number;
    uint32_t signature;
    uint16_t server_port;
    uint16_t client_port;
@@ -464,14 +465,66 @@ static int encode_addr(struct sockaddr *addr, unsigned char *target_addr, uint16
    return 0;
 }
 
+int random_number(uint64_t *unique_value) {
+   int local_errno;
+   uint64_t rand_num, uuid_num;
+
+   //random number file
+   FILE *random_file = fopen("/dev/random", "r");
+   if (!random_file) {
+      local_errno = errno;   
+      debug_printf("Failed to open /dev/random. Error: %s\n",strerror(local_errno));
+      fclose(random_file);
+      return -1;
+   }
+   
+   if (fread(&rand_num, sizeof(rand_num), 1, random_file) != 1) {  
+      local_errno = errno;   
+      debug_printf("Failed to read random number. Error: %s\n",strerror(local_errno)); 
+      fclose(random_file);
+      return -1;
+   }
+   fclose(random_file);
+
+   //uuid file
+   FILE *uuid_file = fopen("/proc/sys/kernel/random/uuid", "r");
+   if (!uuid_file) {
+      local_errno = errno;   
+      debug_printf("Failed to open /proc/sys/kernel/random/uuid. Error: %s\n",strerror(local_errno));
+      fclose(uuid_file);
+      return -1;
+   }
+   if (fread(&uuid_num, sizeof(uuid_num), 1, uuid_file) != 1) {  
+      local_errno = errno;   
+      debug_printf("Failed to read uuid. Error: %s\n",strerror(local_errno)); 
+      fclose(uuid_file);
+      return -1;
+   }
+   fclose(uuid_file);
+
+   time_t now = time(NULL);
+
+   // Combine timestamp,random number, uuid
+   *unique_value = now ^ rand_num ^ uuid_num;
+   return 0;
+}
+
+
 static int encode_packet(handshake_packet_t *packet, uint64_t session_id,
                          struct sockaddr *server_addr, struct sockaddr *client_addr)
-{
+{  
+   
    int result;
    packet->uid = getuid();
    packet->gid = getgid();
-   packet->random_number = rand(); //TODO CHANGE RANDOM FUNC
    packet->session_id = session_id;
+
+   result = random_number(&packet->random_number);
+
+   if (result < 0) {
+      debug_printf("Error encoding random number\n");
+      return result;
+   }
    
    result = encode_addr(server_addr, packet->server_addr, &packet->server_port);
    if (result < 0) {
