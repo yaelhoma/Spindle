@@ -137,7 +137,7 @@ int ldcs_listen() {
    fd_set rd, wr, er;
    int do_listen=0;
 
-   debug_printf2("Listening for data\n");
+   debug_printf2("Listening for data\n"); // OK! WE FOUND IT! handle fd disconnect here?
    do_listen=(ldcs_listen_data.item_table_used>0);
    while(do_listen && !do_exit) {
       nfds = 0;
@@ -149,7 +149,7 @@ int ldcs_listen() {
       for(c=0;c<ldcs_listen_data.item_table_size;c++) {
          if ( ldcs_listen_data.item_table[c].state == LDCS_LISTEN_STATUS_ACTIVE ) {
             fd = ldcs_listen_data.item_table[c].fd;
-            FD_SET(fd, &rd);
+            FD_SET(fd, &rd); //rd only contains last fd in loop? why?
             nfds = max(nfds, fd);  
          }
       }

@@ -78,6 +78,7 @@ int ldcs_audit_server_network_setup(unsigned int port, unsigned int num_ports, u
    memset(&ldcs_process_data, 0, sizeof(ldcs_process_data));
 
    /* Initialize server->server network */
+   // calls cobo_init
    ldcs_audit_server_md_init(port, num_ports, unique_id, &ldcs_process_data);
 
    /* Use network to broadcast configuration parameters */
@@ -92,7 +93,7 @@ int ldcs_audit_server_network_setup(unsigned int port, unsigned int num_ports, u
       return -1;
    }
    assert(msg.header.type == LDCS_MSG_SETTINGS);
-   result = ldcs_audit_server_md_broadcast(&ldcs_process_data, &msg);
+   result = ldcs_audit_server_md_broadcast(&ldcs_process_data, &msg); // we can use this to bcast dead conn msg, but need to find way to let clients know to pause first maybe
    if (result == -1) {
       err_printf("Error broadcast setup message to children\n");
       return -1;
@@ -206,9 +207,11 @@ int ldcs_audit_server_process(spindle_args_t *args)
    fd = ldcs_get_fd(serverid);
    ldcs_process_data.serverfd = fd;
   
+   //if disconnected, we don't want to remake process data all over so maybe we need to handle something here
    ldcs_audit_server_md_register_fd(&ldcs_process_data);
   
    /* register server listen fd to listener */
+   //this is registering client process to cobo server. If this disconnects, not a hardware failure because its a same domain connection 
    if (fd != -1)
       ldcs_listen_register_fd(fd, serverid, &_ldcs_server_CB, (void *) &ldcs_process_data);
 
@@ -235,6 +238,8 @@ int ldcs_audit_server_run()
 {
    /* start loop */
    debug_printf2("Entering server loop\n");
+
+   //or maybe we handle disonnection here?
    ldcs_listen();
   
    ldcs_process_data.server_stat.listen_time= ldcs_get_time() - ldcs_process_data.server_stat.starttime;

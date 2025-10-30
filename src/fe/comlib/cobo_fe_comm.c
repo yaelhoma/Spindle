@@ -67,12 +67,12 @@ int ldcs_audit_server_fe_md_open ( char **hostlist, int numhosts, unsigned int p
    portlist[num_ports] = 0;
 
    debug_printf2("Opening with port %d - %d\n", portlist[0], portlist[num_ports-1]);
-   cobo_server_open(unique_id, hostlist, numhosts, portlist, num_ports);
+   cobo_server_open(unique_id, hostlist, numhosts, portlist, num_ports); //connect FE to tree. Root BE proc on same node
    free(portlist);
 
    cobo_server_get_root_socket(&root_fd);
   
-   ldcs_cobo_read_fd(root_fd, &ack, sizeof(ack));
+   ldcs_cobo_read_fd(root_fd, &ack, sizeof(ack)); //wait for 
 
    return(rc);
 }

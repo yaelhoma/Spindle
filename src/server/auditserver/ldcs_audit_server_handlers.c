@@ -1926,6 +1926,7 @@ int handle_server_error(ldcs_process_data_t *procdata, node_peer_t peer)
 {
    if (ldcs_audit_server_md_is_parent(peer))
       procdata->num_exited_parents++;
+      //reconnect to tree
    else
       procdata->num_exited_children_peers++;
    return 0;

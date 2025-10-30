@@ -1083,7 +1083,7 @@ static int cobo_allreduce_max_int_tree(int* sendbuf, int* recvbuf)
                        cobo_child[i]);
             exit(1);
         }
-
+        debug_printf3("i: %d. Child val: %d. Max val: %d.\n",i,child_val,max_val);
         /* compare child's max to our current max */
         if (child_val > max_val) {
             max_val = child_val;
@@ -1093,6 +1093,7 @@ static int cobo_allreduce_max_int_tree(int* sendbuf, int* recvbuf)
     /* forward data to parent if we're not rank 0, otherwise set the recvbuf */
     if (cobo_me != 0) {
         /* not the root, so forward our reduction result to our parent */
+        debug_printf3("sending reduce max val: %d.\n",max_val);
         if (cobo_write_fd(cobo_parent_fd, &max_val, sizeof(max_val)) < 0) {
             err_printf("Sending reduced data to parent failed\n");
             exit(1);

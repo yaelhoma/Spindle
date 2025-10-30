@@ -407,7 +407,7 @@ int spindleInitFE(const char **hosts, spindle_args_t *params)
                                 &md_data_ptr);
 
    /* Broadcast parameters */
-   debug_printf("Sending parameters to servers\n");
+   debug_printf("Sending parameters to servers\n"); //ack in ldcs_audit_server_network_setup() in ldcs_audit_server_process.c line 89
    void *param_buffer;
    unsigned int param_buffer_size;
    pack_data(params, param_buffer, param_buffer_size);

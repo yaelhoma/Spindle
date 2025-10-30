@@ -107,7 +107,7 @@ int ldcs_audit_server_md_init(unsigned int port, unsigned int num_ports,
    cobo_get_num_childs(&fanout);
    data->server_stat.md_fan_out = data->md_fan_out = fanout;
 
-   cobo_barrier();
+   cobo_barrier(); //great example of how we will bcast failure (after orphans reconnect to root)
 
    /* send ack about being ready */
    if (data->md_rank == 0) { 
@@ -294,6 +294,7 @@ int ldcs_audit_server_md_cobo_CB(int fd, int nc, void *data)
    if (rc == -1) {
       debug_printf2("Error return during recv from peer.\n");
       rc = handle_server_error(ldcs_process_data, peer);
+      //TODO add reconnect to root?
       return -1;
    }
 
